@@ -43,7 +43,11 @@ router.get("/circles", authenticate, async (req, res): Promise<void> => {
 
   // Teachers/supervisors/students can only see their circle
   if (req.userRole === "teacher" || req.userRole === "supervisor" || req.userRole === "student") {
-    circles = circles.filter(c => c.id === req.userCircleId);
+    const ownedCircleIds = allCircles
+      .filter(c => req.userRole === "teacher" ? c.teacherId === req.userId : c.supervisorId === req.userId)
+      .map(c => c.id);
+    const allowedIds = new Set([...(req.userCircleId != null ? [req.userCircleId] : []), ...ownedCircleIds]);
+    circles = circles.filter(c => allowedIds.has(c.id));
   }
 
   res.json(circles);

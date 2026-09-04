@@ -1088,7 +1088,10 @@ function PlanWizard({ open, onClose, onSaved, studentId, circleId, isFixation, t
       const res = await fetch(`${BASE}/api/students/${studentId}/review-plan`, {
         method: "POST", headers: authHeader(), body: JSON.stringify(body),
       });
-      if (!res.ok) throw new Error(await res.text());
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        throw new Error(payload?.error ?? "تعذر حفظ الخطة، تحققي من البيانات والصلاحيات");
+      }
       toast({ title: "✓ تم حفظ الخطة!" });
       onSaved();
     } catch (e: any) {
@@ -1189,7 +1192,13 @@ function PlanWizard({ open, onClose, onSaved, studentId, circleId, isFixation, t
           );
         case 3:
           return (
-            <StepFixationWeeks days={days} updateDay={updateDay} quantity={quantity} startDate={startDate} />
+            <StepFixationWeeks
+              days={days}
+              updateDay={updateDay}
+              quantity={quantity}
+              startDate={startDate}
+              isAuto={fixationMode === "auto"}
+            />
           );
       }
     } else {
@@ -1449,9 +1458,9 @@ function StepGirlsDays({ days, updateDay, isAuto, totalPages, totalDays, onRegen
 }
 
 // ─── Fixation Weeks Step ──────────────────────────────────────────────────────
-function StepFixationWeeks({ days, updateDay, quantity, startDate }: {
+function StepFixationWeeks({ days, updateDay, quantity, startDate, isAuto }: {
   days: DayEntry[]; updateDay: (i: number, f: keyof DayEntry, v: any) => void;
-  quantity: "half" | "full" | "double"; startDate: string;
+  quantity: "half" | "full" | "double"; startDate: string; isAuto: boolean;
 }) {
   const weeks = Array.from({ length: 6 }, (_, w) => ({
     weekNum: w + 1,
@@ -1478,7 +1487,7 @@ function StepFixationWeeks({ days, updateDay, quantity, startDate }: {
   return (
     <div className="space-y-3">
     <p className="text-sm text-muted-foreground">
-      أدخلي السورة والآيات لكل يوم ({quantity === "half" ? "نصف وجه" : quantity === "full" ? "وجه كامل" : "وجهان"} / يوم)
+      {isAuto ? "النطاقات موزعة تلقائياً من نقطة البداية التي اخترتها" : "عدّلي السورة والآيات لكل يوم"} ({quantity === "half" ? "نصف وجه" : quantity === "full" ? "وجه كامل" : "وجهان"} / يوم)
       </p>
       <div className="max-h-72 overflow-y-auto space-y-4">
         {weeks.map(({ weekNum, days: wDays, startIdx }) => (
@@ -1494,7 +1503,15 @@ function StepFixationWeeks({ days, updateDay, quantity, startDate }: {
                       <span className="text-xs font-semibold">{dayNames[i]}</span>
                       {dateStr && <span className="text-[10px] text-muted-foreground">{formatArDate(dateStr)}</span>}
                     </div>
-                    <div className="grid grid-cols-2 gap-1.5">
+                    {isAuto ? (
+                      <div className="rounded-lg bg-background border border-border/50 p-2 text-xs">
+                        {day.surahStart ? (
+                          <span>{day.surahStart} آية {day.ayahStart} ← {day.surahEnd} آية {day.ayahEnd}</span>
+                        ) : (
+                          <span className="text-muted-foreground">لا يوجد نطاق كافٍ من نقطة البداية</span>
+                        )}
+                      </div>
+                    ) : <div className="grid grid-cols-2 gap-1.5">
                       <div>
                         <select className="border rounded p-1 text-xs bg-background w-full" value={day.surahStart ?? ""}
                           onChange={e => { updateDay(globalIdx, "surahStart", e.target.value || undefined); updateDay(globalIdx, "ayahStart", undefined); }}>
@@ -1511,7 +1528,7 @@ function StepFixationWeeks({ days, updateDay, quantity, startDate }: {
                         </select>
                       </div>
                       <AyahSelect surahName={day.surahEnd} value={day.ayahEnd} onChange={v => updateDay(globalIdx, "ayahEnd", v)} placeholder="آية النهاية" />
-                    </div>
+                    </div>}
                   </div>
                 );
               })}

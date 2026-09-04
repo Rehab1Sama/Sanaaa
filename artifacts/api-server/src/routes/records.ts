@@ -13,7 +13,14 @@ function sameText(a: string | null | undefined, b: string | null | undefined): b
 
 async function allowedCircle(req: any, circleId: number): Promise<boolean> {
   if (req.userRole === "leader" || req.userRole === "deputy") return true;
-  if (req.userRole === "teacher" || req.userRole === "supervisor") return req.userCircleId === circleId;
+  if (req.userRole === "teacher" || req.userRole === "supervisor") {
+    const [circle] = await db.select({ id: circlesTable.id, teacherId: circlesTable.teacherId, supervisorId: circlesTable.supervisorId })
+      .from(circlesTable).where(eq(circlesTable.id, circleId));
+    return Boolean(circle && (
+      circle.id === req.userCircleId ||
+      (req.userRole === "teacher" ? circle.teacherId === req.userId : circle.supervisorId === req.userId)
+    ));
+  }
   if (req.userRole === "track_supervisor") {
     const [circle] = await db.select().from(circlesTable).where(eq(circlesTable.id, circleId));
     return Boolean(circle && sameText(circle.track, req.userTrack));
