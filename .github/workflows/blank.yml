@@ -1,4 +1,4 @@
-name: Extract ZIP
+name: Move Project to Root
 
 on:
   workflow_dispatch:
@@ -7,61 +7,29 @@ permissions:
   contents: write
 
 jobs:
-  extract:
+  move:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find ZIP file
-        id: find_zip
-        run: |
-          ZIP_FILE=$(find . -maxdepth 1 -type f \( -iname "*.zip" \) | head -n 1)
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "❌ لم يتم العثور على ملف ZIP في جذر المستودع"
-            exit 1
-          fi
-
-          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_OUTPUT"
-          echo "Found: $ZIP_FILE"
-
-      - name: Extract ZIP
-        run: |
-          mkdir -p extracted
-          unzip -o "${{ steps.find_zip.outputs.ZIP_FILE }}" -d extracted
-
-      - name: Move project to repository root
+      - name: Move project from repo to root
         run: |
           set -e
 
-          echo "📂 محتويات extracted:"
-          find extracted -maxdepth 2 -type f | head -50
-
-          # إذا كان المشروع داخل extracted/repo
-          if [ -d "extracted/repo" ]; then
-            echo "✅ وجدنا مجلد repo"
-
-            # نقل محتويات repo إلى جذر المستودع
-            cp -a extracted/repo/. ./ 
-
-          else
-            echo "⚠️ لم يوجد مجلد repo، سيتم استخدام المحتويات مباشرة"
-            cp -a extracted/. ./
+          if [ ! -d "repo" ]; then
+            echo "❌ مجلد repo غير موجود"
+            exit 1
           fi
 
-          # حذف مجلدات العمل المؤقتة
-          rm -rf extracted
+          echo "📦 نقل محتويات repo إلى جذر المستودع..."
 
-          # حذف ملف ZIP من المستودع
-          rm -f "${{ steps.find_zip.outputs.ZIP_FILE }}"
+          cp -a repo/. ./
 
-          # حذف مجلد repo إذا كان موجودًا مسبقًا
+          echo "🗑️ حذف مجلد repo..."
           rm -rf repo
 
-      - name: Show final structure
-        run: |
           echo "📁 البنية النهائية:"
           find . -maxdepth 2 -type f | sort | head -100
 
@@ -73,9 +41,9 @@ jobs:
           git add -A
 
           if git diff --cached --quiet; then
-            echo "ℹ️ لا توجد تغييرات جديدة"
+            echo "ℹ️ لا توجد تغييرات"
             exit 0
           fi
 
-          git commit -m "Extract project to repository root"
+          git commit -m "Move project to repository root"
           git push origin main
