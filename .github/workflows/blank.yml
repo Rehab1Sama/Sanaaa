@@ -3,31 +3,79 @@ name: Extract ZIP
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   extract:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Find ZIP file
+        id: find_zip
+        run: |
+          ZIP_FILE=$(find . -maxdepth 1 -type f \( -iname "*.zip" \) | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ لم يتم العثور على ملف ZIP في جذر المستودع"
+            exit 1
+          fi
+
+          echo "ZIP_FILE=$ZIP_FILE" >> "$GITHUB_OUTPUT"
+          echo "Found: $ZIP_FILE"
+
       - name: Extract ZIP
         run: |
-          unzip -o "Quran-Center-Management-final-*.zip" -d extracted
+          mkdir -p extracted
+          unzip -o "${{ steps.find_zip.outputs.ZIP_FILE }}" -d extracted
 
-      - name: Move files
+      - name: Move project to repository root
         run: |
-          cp -r extracted/* .
-          rm -rf extracted
-          rm -f Quran-Center-Management-final-*.zip
+          set -e
 
-      - name: Commit extracted files
+          echo "📂 محتويات extracted:"
+          find extracted -maxdepth 2 -type f | head -50
+
+          # إذا كان المشروع داخل extracted/repo
+          if [ -d "extracted/repo" ]; then
+            echo "✅ وجدنا مجلد repo"
+
+            # نقل محتويات repo إلى جذر المستودع
+            cp -a extracted/repo/. ./ 
+
+          else
+            echo "⚠️ لم يوجد مجلد repo، سيتم استخدام المحتويات مباشرة"
+            cp -a extracted/. ./
+          fi
+
+          # حذف مجلدات العمل المؤقتة
+          rm -rf extracted
+
+          # حذف ملف ZIP من المستودع
+          rm -f "${{ steps.find_zip.outputs.ZIP_FILE }}"
+
+          # حذف مجلد repo إذا كان موجودًا مسبقًا
+          rm -rf repo
+
+      - name: Show final structure
+        run: |
+          echo "📁 البنية النهائية:"
+          find . -maxdepth 2 -type f | sort | head -100
+
+      - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .
-          git commit -m "Extract project ZIP" || echo "No changes"
-          git push
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "ℹ️ لا توجد تغييرات جديدة"
+            exit 0
+          fi
+
+          git commit -m "Extract project to repository root"
+          git push origin main
