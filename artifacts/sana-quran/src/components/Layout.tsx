@@ -526,4 +526,344 @@ export default function Layout({ user, children }: LayoutProps) {
   return (
     <div className="min-h-screen sana-main-background flex flex-col" dir="rtl">
       {/* Messages popup on login */}
-      <NewMe
+      <NewMessagesModal userId={user.id} role={user.role} navigate={(p) => { setLocation(p); setSidebarOpen(false); }} />
+
+      {/* News Ticker */}
+      <NewsTicker />
+
+      <div className="flex flex-1">
+        {/* Sidebar */}
+        <aside
+          className={`fixed inset-y-0 right-0 top-0 z-50 w-72 flex flex-col transition-transform duration-300 md:relative md:translate-x-0 ${
+            sidebarOpen ? "translate-x-0" : "translate-x-full md:translate-x-0"
+          }`}
+          style={{
+            background: "linear-gradient(180deg,  #1A2260 0%, #232D73 50%, #2B3784 100%)"
+          }}
+        >
+          {/* Logo */}
+          <div className="p-5 border-b border-white/10">
+            <div className="text-center">
+              <div className="w-24 h-24 rounded-2xl bg-white flex items-center justify-center mx-auto mb-3 shadow-lg overflow-hidden">
+                <img src={logoUrl} alt="شعار مقرأة سَنا الآي" className="w-full h-full object-contain" />
+              </div>
+              <h1 className="text-white font-bold text-lg leading-tight">مقرأة سَنا الآي</h1>
+              <p className="text-white/60 text-xs mt-1">نظام إدارة المقرأة</p>
+            </div>
+          </div>
+
+          {/* User info + account switcher */}
+          <div className="px-4 py-4 border-b border-white/10">
+            {/* Current account card */}
+            <div className="bg-white/10 rounded-xl p-3">
+              <p className="text-white font-semibold text-sm truncate">{user.name}</p>
+              <p className="text-white/60 text-xs mt-0.5">{getRoleLabel(user.role)}</p>
+              {currentAccount?.circleName && (
+                <p className="text-white/50 text-[11px] mt-0.5 truncate">{currentAccount.circleName}</p>
+              )}
+              {user.track && (
+                <Badge className="mt-1 bg-white/20 text-white text-xs border-0">
+                  مسار {user.track}
+                </Badge>
+              )}
+            </div>
+
+            {/* Other accounts */}
+            {otherAccounts.length > 0 && (
+              <div className="mt-2.5">
+                <div className="flex items-center gap-1.5 px-1 mb-1.5">
+                  <ArrowLeftRight className="w-3 h-3 text-white/40" />
+                  <p className="text-white/40 text-[10px] font-medium">تبديل الحساب</p>
+                </div>
+                <div className="space-y-1">
+                  {otherAccounts.map(acc => (
+                    <button
+                      key={acc.id}
+                      onClick={() => handleSwitchAccount(acc.id)}
+                      disabled={switching}
+                      className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-white/70 hover:bg-white/10 hover:text-white transition-all duration-200 disabled:opacity-50 disabled:cursor-wait"
+                    >
+                      <div className="w-7 h-7 rounded-full bg-white/20 flex items-center justify-center flex-shrink-0">
+                        {switching
+                          ? <Loader2 className="w-3.5 h-3.5 text-white animate-spin" />
+                          : <span className="text-xs font-bold text-white leading-none">{acc.name.charAt(0)}</span>
+                        }
+                      </div>
+                      <div className="text-right flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white/90 truncate leading-tight">{acc.name}</p>
+                        <p className="text-white/50 text-[11px] leading-tight">
+                          {acc.circleName ?? acc.roleLabel}{acc.track ? ` — ${acc.track}` : ""}
+                        </p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Alert Bell — leader, deputy, track_supervisor */}
+          {ALERT_ROLES.includes(user.role) && (
+            <div className="px-4 pt-2 pb-1 flex items-center gap-2">
+              <LowMemorizationAlertBell userId={user.id} role={user.role} />
+              <span className="text-white/50 text-xs">تنبيهات قلة الحفظ</span>
+            </div>
+          )}
+
+          {/* Student Search — leader & track_supervisor only */}
+          {SEARCH_ROLES.includes(user.role) && (
+            <div className="pt-3 pb-1">
+              <StudentSearch onNavigate={(path) => { setLocation(path); setSidebarOpen(false); }} />
+            </div>
+          )}
+
+          {/* Navigation */}
+          <nav className="flex-1 p-4 overflow-y-auto space-y-1">
+            {navItems.map(item => (
+              <NavLink key={item.href} {...item} />
+            ))}
+          </nav>
+
+          {/* Dark mode toggle + Logout */}
+          <div className="p-4 border-t border-white/10 space-y-1">
+            <DarkModeToggle />
+            <button
+              onClick={handleLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-white/70 hover:bg-white/10 hover:text-white transition-all duration-200 text-sm font-semibold"
+              data-testid="button-logout"
+            >
+              <LogOut className="w-4 h-4" />
+              <span>تسجيل الخروج</span>
+            </button>
+          </div>
+        </aside>
+
+        {/* Mobile overlay */}
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 bg-black/50 z-40 md:hidden"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
+
+        {/* Main content */}
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          {/* Mobile header */}
+          <header className="md:hidden bg-white border-b border-border px-4 py-3 flex items-center justify-between shadow-sm">
+            <h1 className="text-primary font-bold text-base">مقرأة سَنا الآي</h1>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              data-testid="button-menu"
+            >
+              {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            </Button>
+          </header>
+
+          <div className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
+            {children}
+          </div>
+          <footer className="text-center py-3 px-4 text-xs text-muted-foreground border-t border-border bg-background/50">
+            جميع الحقوق محفوظة لمقرأة سَنا الآي &copy; 2026
+          </footer>
+        </main>
+      </div>
+    </div>
+  );
+}
+
+
+function DarkModeToggle() {
+  const { isDark, toggleDark } = useTheme();
+  return (
+    <button
+      onClick={toggleDark}
+      className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-white/70 hover:bg-white/10 hover:text-white transition-all duration-200 text-sm font-semibold"
+      title={isDark ? "الوضع النهاري" : "الوضع الليلي"}
+    >
+      {isDark
+        ? <Sun className="w-4 h-4" />
+        : <Moon className="w-4 h-4" />
+      }
+      <span>{isDark ? "الوضع النهاري" : "الوضع الليلي"}</span>
+    </button>
+  );
+}
+
+function getRoleLabel(role: string): string {
+  const labels: Record<string, string> = {
+    leader: "القائدة",
+    deputy: "النائبة",
+    data_entry: "مُدخلة بيانات",
+    teacher: "معلمة",
+    supervisor: "مشرفة",
+    student: "طالبة",
+    track_supervisor: "مسؤولة مسار",
+    exam_supervisor: "مسؤولة الاختبارات",
+    volunteer: "متطوعة",
+  };
+  return labels[role] ?? role;
+}
+
+type NavItem = { href: string; label: string; icon: React.ElementType; badge?: number; feature?: string };
+
+function filterNav(items: NavItem[]): NavItem[] {
+  return items.filter(item => !item.feature || isFeatureEnabled(item.feature));
+}
+
+function getNavItems(role: string, unreadCount = 0, track?: string | null, circleDataEntryType?: string | null): NavItem[] {
+  const hideShortcomings  = shouldHideShortcomings(track, circleDataEntryType);
+
+  if (role === "leader") {
+    return filterNav([
+      { href: "/", label: "الرئيسية", icon: Home },
+      { href: "/review-plans-overview", label: "خطط المراجعة", icon: BookOpen },
+      { href: "/certificates", label: "الشهادات الفصلية", icon: CertificateIcon },
+      { href: "/data-entry-status", label: "المدخلات", icon: ClipboardList },
+      { href: "/accounts", label: "الحسابات", icon: UserCheck },
+      { href: "/statistics", label: "الإحصائيات", icon: BarChart3, feature: "stats_general" },
+      { href: "/attendance", label: "الغيابات", icon: CalendarCheck },
+      { href: "/monthly-report", label: "تقرير الحضور", icon: BarChart2, feature: "stats_monthly" },
+      { href: "/archived-students", label: "المؤرشفات", icon: Archive },
+      { href: "/circles", label: "الحلقات", icon: Users },
+      { href: "/manage-tracks", label: "المسارات والحلقات", icon: Layers },
+      { href: "/leader-tasks", label: "متابعة المهام اليومية", icon: ClipboardList },
+      { href: "/deputy-board", label: "مهام النائبة", icon: ClipboardList, feature: "deputy_tasks" },
+      { href: "/volunteer", label: "الاختبارات", icon: GraduationCap, feature: "exam" },
+      { href: "/teacher-rotation", label: "شقلبة المعلمات", icon: Shuffle, feature: "teacher_rotation" },
+      { href: "/badges", label: "الأوسمة", icon: Award, feature: "badges" },
+      { href: "/calendar", label: "التقويم", icon: Calendar, feature: "calendar" },
+      { href: "/shortcomings", label: "التقصير", icon: AlertTriangle, feature: "shortcomings" },
+      { href: "/stumbling-stats", label: "إحصائيات التعثر", icon: AlertTriangle, feature: "stats_stumbling" },
+      { href: "/store-manage", label: "المتجر", icon: ShoppingBag, feature: "store" },
+      { href: "/messages", label: "الرسائل", icon: MessageSquare, feature: "messages" },
+      { href: "/registration", label: "التسجيل", icon: PenSquare, feature: "registration" },
+      { href: "/pending-registrations", label: "طلبات التسجيل", icon: ClipboardList, feature: "registration" },
+      { href: "/registration-students", label: "طالبات قائمة التسجيل", icon: Users, feature: "registration" },
+      { href: "/onboard", label: "إضافة عضو مباشرة", icon: BookUser },
+      { href: "/student-leaves", label: "طالبات الإجازة", icon: PlaneTakeoff, feature: "leaves" },
+      { href: "/reports", label: "التقارير الأسبوعية", icon: TrendingUp, feature: "stats_weekly" },
+      { href: "/white-label", label: "نسخ للبيع", icon: Globe },
+      { href: "/circles-staffing", label: "توزيع المعلمات والمشرفات", icon: UserX },
+      { href: "/unlinked-staff", label: "موظفات غير مرتبطات", icon: UserX },
+      { href: "/unlinked-students", label: "طالبات بدون حلقة", icon: UserX },
+      { href: "/archived-staff", label: "الموظفات المؤرشفات", icon: Archive },
+      { href: "/db-settings", label: "إعدادات قاعدة البيانات", icon: Database },
+      { href: "/export", label: "تصدير البيانات", icon: FileDown },
+    ]);
+  }
+  if (role === "deputy") {
+    return filterNav([
+      { href: "/", label: "الرئيسية", icon: Home },
+      { href: "/review-plans-overview", label: "خطط المراجعة", icon: BookOpen },
+      { href: "/certificates", label: "الشهادات الفصلية", icon: CertificateIcon },
+      { href: "/data-entry-status", label: "المدخلات", icon: ClipboardList },
+      { href: "/accounts", label: "الحسابات", icon: UserCheck },
+      { href: "/statistics", label: "الإحصائيات", icon: BarChart3, feature: "stats_general" },
+      { href: "/attendance", label: "الغيابات", icon: CalendarCheck },
+      { href: "/monthly-report", label: "تقرير الحضور", icon: BarChart2, feature: "stats_monthly" },
+      { href: "/archived-students", label: "المؤرشفات", icon: Archive },
+      { href: "/deputy-circles", label: "الحلقات", icon: Users },
+      { href: "/manage-tracks", label: "المسارات والحلقات", icon: Layers },
+      { href: "/leader-tasks", label: "متابعة المهام اليومية", icon: ClipboardList },
+      { href: "/volunteer", label: "الاختبارات", icon: GraduationCap, feature: "exam" },
+      { href: "/teacher-rotation", label: "شقلبة المعلمات", icon: Shuffle, feature: "teacher_rotation" },
+      { href: "/badges", label: "الأوسمة", icon: Award, feature: "badges" },
+      { href: "/calendar", label: "التقويم", icon: Calendar, feature: "calendar" },
+      { href: "/shortcomings", label: "التقصير", icon: AlertTriangle, feature: "shortcomings" },
+      { href: "/stumbling-stats", label: "إحصائيات التعثر", icon: AlertTriangle, feature: "stats_stumbling" },
+      { href: "/messages", label: "الرسائل", icon: MessageSquare, feature: "messages" },
+      { href: "/registration", label: "التسجيل", icon: PenSquare, feature: "registration" },
+      { href: "/pending-registrations", label: "طلبات التسجيل", icon: ClipboardList, feature: "registration" },
+      { href: "/registration-students", label: "طالبات قائمة التسجيل", icon: Users, feature: "registration" },
+      { href: "/onboard", label: "إضافة عضو مباشرة", icon: BookUser },
+      { href: "/export", label: "تصدير البيانات", icon: FileDown },
+      { href: "/student-leaves", label: "طالبات الإجازة", icon: PlaneTakeoff, feature: "leaves" },
+      { href: "/deputy-tasks", label: "مهامي", icon: ClipboardList, feature: "deputy_tasks" },
+      { href: "/reports", label: "التقارير الأسبوعية", icon: TrendingUp, feature: "stats_weekly" },
+      { href: "/circles-staffing", label: "توزيع المعلمات والمشرفات", icon: UserX },
+      { href: "/unlinked-staff", label: "موظفات غير مرتبطات", icon: UserX },
+      { href: "/unlinked-students", label: "طالبات بدون حلقة", icon: UserX },
+      { href: "/archived-staff", label: "الموظفات المؤرشفات", icon: Archive },
+    ]);
+  }
+  if (role === "data_entry") {
+    return filterNav([
+      { href: "/", label: "إدخال البيانات", icon: PenSquare },
+      { href: "/calendar", label: "التقويم", icon: Calendar, feature: "calendar" },
+    ]);
+  }
+  if (role === "teacher" || role === "supervisor") {
+    // مطابقة تامة لقاعدة الصلاحية في السيرفر (records.ts → allowedDataEntryRole):
+    // حلقات الأمهات والأطفال → المعلمة هي من تُدخل البيانات.
+    // بقية الحلقات (فتيات/تصحيح/تثبيت...) → المشرفة هي من تُدخل البيانات.
+    const teacherOwnsDataEntry = circleDataEntryType === "children" || circleDataEntryType === "mothers";
+    const canSelfEnterData =
+      (role === "supervisor" && !teacherOwnsDataEntry) || (role === "teacher" && teacherOwnsDataEntry);
+    return filterNav([
+      { href: "/", label: "حلقتي", icon: Users },
+      ...(canSelfEnterData ? [{ href: "/data-entry", label: "إدخال البيانات", icon: PenSquare }] : []),
+      { href: "/review-plans-overview", label: "خطط المراجعة", icon: BookOpen },
+      { href: "/statistics", label: "الإحصائيات", icon: BarChart3, feature: "stats_general" },
+      ...(!hideShortcomings ? [{ href: "/shortcomings", label: "التقصير", icon: AlertTriangle, feature: "shortcomings" }] : []),
+      { href: "/badges", label: "أوسمتي", icon: Award, feature: "badges" },
+      { href: "/calendar", label: "التقويم", icon: Calendar, feature: "calendar" },
+      { href: "/my-messages", label: "رسائلي", icon: MessageSquare, badge: unreadCount, feature: "messages" },
+    ]);
+  }
+  if (role === "student") {
+    return filterNav([
+      { href: "/", label: "تقدمي", icon: BarChart3 },
+      { href: "/attendance", label: "غياباتي", icon: CalendarCheck },
+      { href: "/shortcomings", label: "تقصيري", icon: AlertTriangle, feature: "shortcomings" },
+      { href: "/review-plans-overview", label: "الخطط", icon: BookOpen },
+      { href: "/my-certificate", label: "شهادتي الفصلية", icon: CertificateIcon },
+      { href: "/statistics", label: "إحصائياتي", icon: BarChart3, feature: "stats_general" },
+      { href: "/badges", label: "أوسمتي", icon: Award, feature: "badges" },
+      { href: "/calendar", label: "التقويم", icon: Calendar, feature: "calendar" },
+      { href: "/my-messages", label: "رسائلي", icon: MessageSquare, badge: unreadCount, feature: "messages" },
+      { href: "/audio", label: "صوتيات المصحف", icon: Headphones, feature: "audio" },
+    ]);
+  }
+  if (role === "track_supervisor") {
+    return filterNav([
+      { href: "/", label: "مساري", icon: Users },
+      { href: "/review-plans-overview", label: "خطط المراجعة", icon: BookOpen },
+      { href: "/certificates", label: "الشهادات الفصلية", icon: CertificateIcon },
+      { href: "/circles", label: "الحلقات", icon: BookOpen },
+      { href: "/accounts", label: "الحسابات", icon: UserCheck },
+      { href: "/circles-staffing", label: "توزيع المعلمات والمشرفات", icon: UserX },
+      { href: "/track-report", label: "ملخص المسار", icon: BarChart2 },
+      { href: "/daily-tasks", label: "المهام اليومية", icon: ClipboardList },
+      { href: "/statistics", label: "الإحصائيات", icon: BarChart3, feature: "stats_general" },
+      { href: "/attendance", label: "الغيابات", icon: CalendarCheck },
+      { href: "/monthly-report", label: "تقرير الحضور", icon: BarChart2, feature: "stats_monthly" },
+      { href: "/archived-students", label: "المؤرشفات", icon: Archive },
+      { href: "/badges", label: "الأوسمة", icon: Award, feature: "badges" },
+      { href: "/calendar", label: "التقويم", icon: Calendar, feature: "calendar" },
+      ...(!hideShortcomings ? [{ href: "/shortcomings", label: "التقصير", icon: AlertTriangle, feature: "shortcomings" }] : []),
+      ...(!hideShortcomings ? [{ href: "/stumbling-stats", label: "إحصائيات التعثر", icon: AlertTriangle, feature: "stats_stumbling" }] : []),
+      { href: "/messages", label: "الرسائل", icon: MessageSquare, feature: "messages" },
+      { href: "/my-messages", label: "رسائلي", icon: MessageSquare, badge: unreadCount, feature: "messages" },
+      { href: "/student-leaves", label: "طالبات الإجازة", icon: PlaneTakeoff, feature: "leaves" },
+      { href: "/pending-registrations", label: "طلبات التسجيل", icon: ClipboardList, feature: "registration" },
+      { href: "/teacher-rotation", label: "شقلبة المعلمات", icon: Shuffle, feature: "teacher_rotation" },
+      { href: "/export", label: "تصدير بيانات المسار", icon: FileDown },
+    ]);
+  }
+  if (role === "volunteer") {
+    return filterNav([
+      { href: "/", label: "الاختبارات", icon: GraduationCap },
+      { href: "/calendar", label: "التقويم", icon: Calendar, feature: "calendar" },
+    ]);
+  }
+  if (role === "exam_supervisor") {
+    return filterNav([
+      { href: "/", label: "الاختبارات", icon: GraduationCap },
+      { href: "/statistics", label: "الإحصائيات", icon: BarChart3, feature: "stats_general" },
+      { href: "/calendar", label: "التقويم", icon: Calendar, feature: "calendar" },
+    ]);
+  }
+  return [];
+          }
