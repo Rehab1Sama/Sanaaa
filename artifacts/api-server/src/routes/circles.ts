@@ -33,15 +33,12 @@ router.get("/circles", authenticate, async (req, res): Promise<void> => {
     circles = circles.filter(c => c.track === req.userTrack);
   }
 
-  // Data entry: فقط الحلقات المُسندة لها — وإذا لم يُسند لها شيء ترى الكل
+  // Data entry: لا ترى إلا الحلقات المُسندة لها.
   if (req.userRole === "data_entry") {
     const assignments = await db.select().from(dataEntryCircleAssignmentsTable)
       .where(eq(dataEntryCircleAssignmentsTable.dataEntryUserId, req.userId!));
-    if (assignments.length > 0) {
-      const assignedIds = new Set(assignments.map(a => a.circleId));
-      circles = circles.filter(c => assignedIds.has(c.id));
-    }
-    // إذا لم يُسند لها حلقات → ترى جميع الحلقات النشطة (سلوك افتراضي)
+    const assignedIds = new Set(assignments.map(a => a.circleId));
+    circles = circles.filter(c => assignedIds.has(c.id));
   }
 
   // Teachers/supervisors/students can only see their circle

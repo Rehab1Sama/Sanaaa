@@ -440,9 +440,10 @@ export default function AccountsPage() {
 
   // حماية إضافية في الواجهة: مسؤولة المسار لا ترى الحسابات المؤرشفة
   // حتى لو بقيت استجابة قديمة في cache قبل تحديثها من الخادم.
+  const userRows: UserRow[] = Array.isArray(users) ? users as UserRow[] : [];
   const visibleUsers = isTrackSupervisor
-    ? (users ?? []).filter((user: any) => !user.isArchived)
-    : (users ?? []);
+    ? userRows.filter(user => !user.isArchived)
+    : userRows;
   const allPersons = groupByEmail(visibleUsers as UserRow[]);
   const persons = allPersons.filter(p => {
     if (searchTerm.trim() && !p.name.includes(searchTerm) && !p.email.toLowerCase().includes(searchTerm.toLowerCase())) return false;
@@ -452,7 +453,7 @@ export default function AccountsPage() {
 
   // Detect duplicate email during new account creation (not editing, not add-role flow)
   const emailDuplicates = (!editingUser && !isAddRoleMode && form.email.trim().length > 3)
-    ? (users ?? [] as UserRow[]).filter((u: any) =>
+    ? userRows.filter((u: UserRow) =>
         u.email.toLowerCase() === form.email.trim().toLowerCase()
       )
     : [];
@@ -1071,7 +1072,7 @@ export default function AccountsPage() {
             <Select value={transferCircleId} onValueChange={setTransferCircleId}>
               <SelectTrigger><SelectValue placeholder="اختاري الحلقة الهدف" /></SelectTrigger>
               <SelectContent>
-                {allCircles
+                {allCirclesForForm
                   .filter(c => c.id !== transferTarget?.circleId)
                   .map(c => (
                     <SelectItem key={c.id} value={c.id.toString()}>{c.name} — {c.track}</SelectItem>

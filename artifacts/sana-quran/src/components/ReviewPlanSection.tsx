@@ -108,6 +108,7 @@ export interface ReviewPlan {
   startDate: string;
   themeColor: string;
   status: string;
+  approvalStatus?: string | null;
   days: DayEntry[];
   studentName?: string;
   studentId?: number;
@@ -167,7 +168,7 @@ function getGirlsSourceSnapshot(plan: ReviewPlan): GirlsReviewSourceSnapshot | n
   }
 }
 
-function getPlanRanges(plan: ReviewPlan): DayQuotaRange[] {
+export function getPlanRanges(plan: ReviewPlan): DayQuotaRange[] {
   const sourceSnapshot = getGirlsSourceSnapshot(plan);
   if (sourceSnapshot) {
     return [
@@ -260,7 +261,7 @@ export default function ReviewPlanSection({ studentId, circleId, trackType, canC
       if (!planRes.ok) { setPlan(null); } else { setPlan(await planRes.json()); }
       if (settingsRes.ok) {
         const s = await settingsRes.json();
-        setCycleStartDate(s.cycleStartDate ?? null);
+        setCycleStartDate((isFixation ? s.fixationCycleStartDate : s.cycleStartDate) ?? null);
         setStudentCanEditPlan(s.studentCanEditPlan === true);
       }
     } catch { setPlan(null); }
@@ -272,6 +273,11 @@ export default function ReviewPlanSection({ studentId, circleId, trackType, canC
   const handleCancel = async () => {
     if (!plan || !confirm("هل تريدين إلغاء الخطة الحالية؟")) return;
     const res = await fetch(`${BASE}/api/students/${studentId}/review-plan/${plan.id}`, { method: "DELETE", headers: authHeader() });
+    if (res.status === 202) {
+      toast({ title: "تم إرسال طلب الإلغاء", description: "ستظهر إمكانية إنشاء خطة جديدة بعد موافقة القائدة" });
+      fetchPlan();
+      return;
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       toast({ title: "لا يمكن الإلغاء", description: err?.error ?? "الخطة مقفلة حتى انتهاء الـ٢١ يوم", variant: "destructive" });
@@ -293,7 +299,9 @@ export default function ReviewPlanSection({ studentId, circleId, trackType, canC
     );
   }
 
-  const isLocked = plan?.planType === "girls_review" && (plan?.cycleInfo?.isLocked ?? false);
+  const isLocked = Boolean(plan?.cycleInfo?.isLocked);
+  const canCancelPlan = Boolean(plan && (studentSelf || effectiveCanCreate));
+  const needsCancellationApproval = Boolean(isLocked && studentSelf && !studentCanEditPlan);
 
   return (
     <>
@@ -315,7 +323,9 @@ export default function ReviewPlanSection({ studentId, circleId, trackType, canC
               {/* Create / renew button:
                   - Staff (canCreate, not studentSelf): only when plan is not locked
                   - Student on her own page (studentSelf): whenever the leader has granted permission (effectiveCanCreate = studentCanEditPlan), even if locked */}
-              {effectiveCanCreate && (!isLocked || studentSelf) && (
+              {plan?.approvalStatus === "pending" ? (
+                <span className="text-xs text-amber-700 bg-amber-50 rounded-lg px-2 py-1">بانتظار موافقة القائدة</span>
+              ) : effectiveCanCreate && (!isLocked || studentSelf) && (
                 <Button size="sm" variant={plan ? "outline" : "default"} className="text-xs gap-1" onClick={() => setWizardOpen(true)}>
                   {plan ? <><RefreshCw className="w-3.5 h-3.5" />تجديد</> : <><Plus className="w-3.5 h-3.5" />إنشاء خطة</>}
                 </Button>
@@ -341,9 +351,10 @@ export default function ReviewPlanSection({ studentId, circleId, trackType, canC
               plan={plan}
               totalDays={totalDays}
               planMode={planMode}
-              canCancel={effectiveCanCreate}
+              canCancel={canCancelPlan}
               onCancel={handleCancel}
               isLocked={isLocked}
+              needsCancellationApproval={needsCancellationApproval}
             />
           )}
         </CardContent>
@@ -502,9 +513,9 @@ function computeDayStatuses(
   return map;
 }
 
-function PlanDisplay({ plan, totalDays, planMode, canCancel, onCancel, isLocked }: {
+function PlanDisplay({ plan, totalDays, planMode, canCancel, onCancel, isLocked, needsCancellationApproval }: {
   plan: ReviewPlan; totalDays: number; planMode: "girls" | "fixation";
-  canCancel?: boolean; onCancel?: () => void; isLocked?: boolean;
+  canCancel?: boolean; onCancel?: () => void; isLocked?: boolean; needsCancellationApproval?: boolean;
 }) {
   const today = getMeccaToday();
   const dates = getDayDates(plan.startDate, totalDays, planMode);
@@ -552,7 +563,7 @@ function PlanDisplay({ plan, totalDays, planMode, canCancel, onCancel, isLocked 
                 title="إلغاء الخطة"
               >
                 <Trash2 className="w-3 h-3" />
-                {isLocked ? "إلغاء (مقفلة)" : "إلغاء"}
+                    {needsCancellationApproval ? "طلب إلغاء" : isLocked ? "إلغاء (مقفلة)" : "إلغاء"}
               </button>
             )}
           </div>
@@ -923,7 +934,28 @@ function PlanWizard({ open, onClose, onSaved, studentId, circleId, isFixation, t
 
   const [wizardMode, setWizardMode] = useState<"auto" | "manual">("auto");
   const [daysInitMode, setDaysInitMode] = useState<"none" | "auto" | "manual">("none");
-  const [quantity, setQuantity] = useState<"full" | "half">("full");
+  const [quantity, setQuantity] = useState<"half" | "full" | "double">("full");
+  const [fixationMode, setFixationMode] = useState<"auto" | "manual">("manual");
+  const [fixationStart, setFixationStart] = useState({ surah: "الفاتحة", ayah: 1 });
+
+  const getFixationDailyPages = useCallback((value: "half" | "full" | "double") => {
+    if (value === "half") return 0.5;
+    if (value === "double") return 2;
+    return 1;
+  }, []);
+
+  const buildFixationDays = useCallback((value: "half" | "full" | "double", count = 24): DayEntry[] =>
+    computeDayRanges(
+      [{ surahStart: fixationStart.surah, ayahStart: fixationStart.ayah, surahEnd: "الناس", ayahEnd: 6 }],
+      Array.from({ length: count }, (_, idx) => ({ pages: getFixationDailyPages(value) })),
+    ).map((segments, idx) => ({
+      dayNumber: idx + 1,
+      pages: getFixationDailyPages(value),
+      surahStart: segments[0]?.surahStart,
+      ayahStart: segments[0]?.ayahStart,
+      surahEnd: segments[segments.length - 1]?.surahEnd,
+      ayahEnd: segments[segments.length - 1]?.ayahEnd,
+    })), [fixationStart, getFixationDailyPages]);
   const [startDate, setStartDate] = useState(cycleStartDate ?? today);
   const [themeColor, setThemeColor] = useState(PLAN_COLORS[1].color);
   const [days, setDays] = useState<DayEntry[]>([]);
@@ -941,6 +973,12 @@ function PlanWizard({ open, onClose, onSaved, studentId, circleId, isFixation, t
         return sum + (p > 0 ? p : 0);
       }, 0);
 
+  const fixationDailyPages = getFixationDailyPages(quantity);
+  const fixationAvailablePages = isFixation
+    ? calculatePages(fixationStart.surah, fixationStart.ayah, "الناس", 6)
+    : 0;
+  const fixationHasEnoughContent = !isFixation || fixationAvailablePages >= fixationDailyPages * totalDays;
+
   useEffect(() => {
     if (!open) {
       setStep(1);
@@ -953,6 +991,8 @@ function PlanWizard({ open, onClose, onSaved, studentId, circleId, isFixation, t
       setSurahRanges([{ ...DEFAULT_RANGE }]);
       setWizardMode("auto");
       setQuantity("full");
+      setFixationMode("manual");
+      setFixationStart({ surah: "الفاتحة", ayah: 1 });
       setTotalPages(0);
     }
   }, [open]);
@@ -978,8 +1018,12 @@ function PlanWizard({ open, onClose, onSaved, studentId, circleId, isFixation, t
         setDaysInitMode("manual");
       }
     }
-    if (isFixation && step === 1 && days.length === 0) {
-      initManualDays();
+    if (isFixation && step === 1) {
+      if (fixationMode === "auto") {
+        setDays(buildFixationDays(quantity, totalDays));
+      } else {
+        setDays(buildFixationDays(quantity, totalDays));
+      }
     }
     setStep(s => s + 1);
   };
@@ -990,6 +1034,7 @@ function PlanWizard({ open, onClose, onSaved, studentId, circleId, isFixation, t
 
   const canGoNext = (): boolean => {
     if (isFixation) {
+      if (step === 1) return fixationHasEnoughContent;
       // Date step is always valid when cycleStartDate is locked, or when user picked a valid date
       if (step === 2) return cycleStartDate ? true : startDate >= today;
       return true;
@@ -1007,10 +1052,19 @@ function PlanWizard({ open, onClose, onSaved, studentId, circleId, isFixation, t
     try {
       const body: any = {
         circleId, startDate, themeColor, days,
-        planMode: isFixation ? "manual" : wizardMode,
+        planMode: isFixation ? fixationMode : wizardMode,
       };
       if (isFixation) {
         body.quantity = quantity;
+        body.quotaType = "surah";
+        body.quotaSurahStart = fixationStart.surah;
+        body.quotaAyahStart = fixationStart.ayah;
+        body.quotaSurahEnd = "الناس";
+        body.quotaAyahEnd = 6;
+        body.totalPages = getFixationDailyPages(quantity) * totalDays;
+        if (fixationMode === "auto") {
+          body.days = buildFixationDays(quantity, totalDays);
+        }
       } else {
         body.quotaType = quotaType;
         if (quotaType === "juz") {
@@ -1054,16 +1108,50 @@ function PlanWizard({ open, onClose, onSaved, studentId, circleId, isFixation, t
         case 1:
           return (
             <div className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-sm font-medium">بداية التثبيت</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    className="border rounded-lg p-2 text-sm bg-background"
+                    value={fixationStart.surah}
+                    onChange={event => setFixationStart({ surah: event.target.value, ayah: 1 })}
+                  >
+                    {SURAH_OPTIONS.map(surah => <option key={surah.number} value={surah.value}>{surah.label}</option>)}
+                  </select>
+                  <AyahSelect
+                    surahName={fixationStart.surah}
+                    value={fixationStart.ayah}
+                    onChange={value => setFixationStart(previous => ({ ...previous, ayah: value ?? 1 }))}
+                    placeholder="آية البداية"
+                  />
+                </div>
+              </div>
+              {!fixationHasEnoughContent && (
+                <p className="text-xs text-destructive bg-destructive/10 rounded-lg p-2">
+                  نقطة البداية لا تحتوي على صفحات كافية لإكمال ٢٤ يومًا بهذه الكمية. اختاري نقطة أسبق أو كمية أقل.
+                </p>
+              )}
               <p className="text-sm text-muted-foreground">اختاري الكمية اليومية لخطة التثبيت (٦ أسابيع × ٤ أيام)</p>
               <div className="grid grid-cols-2 gap-3">
-                {(["full", "half"] as const).map(q => (
+                {(["half", "full", "double"] as const).map(q => (
                   <button key={q} onClick={() => setQuantity(q)}
                     className={`rounded-xl p-5 border-2 text-center transition-colors ${quantity === q ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}>
-                    <p className="text-2xl font-bold mb-1">{q === "full" ? "1" : "½"}</p>
-                    <p className="font-bold text-sm">{q === "full" ? "وجه كامل" : "نصف وجه"}</p>
+                    <p className="text-2xl font-bold mb-1">{q === "half" ? "½" : q === "full" ? "1" : "2"}</p>
+                    <p className="font-bold text-sm">{q === "half" ? "نصف وجه" : q === "full" ? "وجه كامل" : "وجهان"}</p>
                     <p className="text-xs text-muted-foreground mt-1">يومياً لكل يوم تثبيت</p>
                   </button>
                 ))}
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm font-medium">طريقة إنشاء الخطة</p>
+                <div className="grid grid-cols-2 gap-3">
+                  {(["auto", "manual"] as const).map(mode => (
+                    <button key={mode} type="button" onClick={() => setFixationMode(mode)}
+                      className={`rounded-xl border-2 p-3 text-sm ${fixationMode === mode ? "border-primary bg-primary/5" : "border-border"}`}>
+                      {mode === "auto" ? "تلقائية" : "يدوية"}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           );
@@ -1073,7 +1161,7 @@ function PlanWizard({ open, onClose, onSaved, studentId, circleId, isFixation, t
               <div className="space-y-2">
                 {cycleStartDate ? (
                   <>
-                    <p className="text-sm text-muted-foreground">تاريخ بداية الخطة محدد تلقائياً حسب بداية دورة المراجعة</p>
+                    <p className="text-sm text-muted-foreground">تاريخ بداية الخطة محدد تلقائياً حسب بداية دورة التثبيت</p>
                     <div className="bg-violet-50 border border-violet-200 rounded-xl p-3 flex items-center gap-2">
                       <CalendarDays className="w-4 h-4 text-violet-500 shrink-0" />
                       <div>
@@ -1363,7 +1451,7 @@ function StepGirlsDays({ days, updateDay, isAuto, totalPages, totalDays, onRegen
 // ─── Fixation Weeks Step ──────────────────────────────────────────────────────
 function StepFixationWeeks({ days, updateDay, quantity, startDate }: {
   days: DayEntry[]; updateDay: (i: number, f: keyof DayEntry, v: any) => void;
-  quantity: "full" | "half"; startDate: string;
+  quantity: "half" | "full" | "double"; startDate: string;
 }) {
   const weeks = Array.from({ length: 6 }, (_, w) => ({
     weekNum: w + 1,
@@ -1389,8 +1477,8 @@ function StepFixationWeeks({ days, updateDay, quantity, startDate }: {
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-muted-foreground">
-        أدخلي السورة والآيات لكل يوم ({quantity === "full" ? "وجه كامل" : "نصف وجه"} / يوم)
+    <p className="text-sm text-muted-foreground">
+      أدخلي السورة والآيات لكل يوم ({quantity === "half" ? "نصف وجه" : quantity === "full" ? "وجه كامل" : "وجهان"} / يوم)
       </p>
       <div className="max-h-72 overflow-y-auto space-y-4">
         {weeks.map(({ weekNum, days: wDays, startIdx }) => (

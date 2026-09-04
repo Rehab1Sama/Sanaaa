@@ -32,7 +32,7 @@ function getWeekSunday(today: string): string {
  *
  * Returns students who haven't had data entered for the given date.
  * For data_entry role: only students from their assigned circles.
- * If no assignments exist → returns all students (same fallback as my-circles).
+ * If no assignments exist → returns no students.
  */
 router.get("/data-entry/missing", authenticate, async (req, res): Promise<void> => {
   const today = (req.query.date as string) ?? getMeccaToday();
@@ -48,21 +48,21 @@ router.get("/data-entry/missing", authenticate, async (req, res): Promise<void> 
   const recordMap = new Map(todayRecords.map((r) => [`${r.studentId}-${r.circleId}`, r.recordId]));
 
   // For data_entry: get their assigned circle IDs
-  // null = no restriction (show all), array = restrict to these circles
+  // array = restrict to these circles; an empty array means no access.
   let assignedCircleIds: number[] | null = null;
   if (userRole === "data_entry" && userId) {
     const rows = await db
       .select({ circleId: dataEntryCircleAssignmentsTable.circleId })
       .from(dataEntryCircleAssignmentsTable)
       .where(eq(dataEntryCircleAssignmentsTable.dataEntryUserId, userId));
-    // Empty assignments → same fallback as my-circles: show all circles
-    assignedCircleIds = rows.length > 0 ? rows.map((r) => r.circleId) : null;
+    assignedCircleIds = rows.map((r) => r.circleId);
   }
 
-  const circleFilter =
-    assignedCircleIds && assignedCircleIds.length > 0
+  const circleFilter = userRole === "data_entry"
+    ? assignedCircleIds && assignedCircleIds.length > 0
       ? inArray(studentEnrollmentsTable.circleId, assignedCircleIds)
-      : sql`true`;
+      : sql`false`
+    : sql`true`;
 
   // Primary source: enrollment table (source of truth)
   const byEnrollment = await db
@@ -86,10 +86,11 @@ router.get("/data-entry/missing", authenticate, async (req, res): Promise<void> 
       ),
     );
 
-  const directCircleFilter =
-    assignedCircleIds && assignedCircleIds.length > 0
+  const directCircleFilter = userRole === "data_entry"
+    ? assignedCircleIds && assignedCircleIds.length > 0
       ? inArray(studentsTable.circleId, assignedCircleIds)
-      : sql`${studentsTable.circleId} IS NOT NULL`;
+      : sql`false`
+    : sql`${studentsTable.circleId} IS NOT NULL`;
 
   // Fallback source: students with circleId directly on the row
   const byDirect = await db

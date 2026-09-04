@@ -20,10 +20,8 @@ router.get("/data-entry/my-circles", authenticate, async (req, res): Promise<voi
     .where(eq(dataEntryCircleAssignmentsTable.dataEntryUserId, req.userId!));
 
   if (assignments.length === 0) {
-    // إذا لم تُعيَّن حلقات → ترجع جميع الحلقات النشطة (سلوك افتراضي)
-    const allCircles = await db.select().from(circlesTable)
-      .where(eq(circlesTable.isArchived, false));
-    res.json(allCircles); return;
+    // عدم وجود إسناد يعني عدم عرض أي حلقة.
+    res.json([]); return;
   }
 
   const circleIds = assignments.map(a => a.circleId);

@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { BookOpen, CheckCircle2, XCircle, ChevronDown, ChevronUp, Users, Loader2, RefreshCw, CalendarDays, RotateCcw, Clock, Settings2 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { getCurrentPlanDay, getDayDates, formatArDate } from "@/components/ReviewPlanSection";
+import { computeDayRanges, juzListToQuotaRanges, type DayQuotaRange, type DayRangeSegment } from "@/lib/quran";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const getToken = () => localStorage.getItem("sana_auth_token");
@@ -41,6 +42,7 @@ type PlanSummary = {
   quotaSurahEnd: string | null;
   quotaAyahEnd: number | null;
   extraRanges: string | null;
+  reviewSourceSnapshot?: string | null;
   planMode: string | null;
   createdAt: string;
   days: DayEntry[];
@@ -100,6 +102,17 @@ type DelayAlert = {
   unresolvedDelayDays: number;
 };
 
+type CancellationRequest = {
+  id: number;
+  studentId: number;
+  circleId: number;
+  studentName: string;
+  circleName: string;
+  planType: string;
+  startDate: string;
+  cancellationRequestedAt?: string | null;
+};
+
 interface Props {
   userRole?: string;
 }
@@ -133,6 +146,58 @@ function formatDayRange(day: DayEntry): string {
     result += ` → آية ${day.ayahEnd}`;
   }
   return result;
+}
+
+function getPlanRanges(plan: PlanSummary): DayQuotaRange[] {
+  if (plan.reviewSourceSnapshot) {
+    try {
+      const snapshot = JSON.parse(plan.reviewSourceSnapshot) as {
+        approvedJuzNumbers?: unknown;
+        recordRanges?: unknown;
+      };
+      const juzNumbers = Array.isArray(snapshot.approvedJuzNumbers)
+        ? snapshot.approvedJuzNumbers.filter((value): value is number => Number.isInteger(value) && value >= 1 && value <= 30)
+        : [];
+      const recordRanges = Array.isArray(snapshot.recordRanges)
+        ? snapshot.recordRanges.filter((range): range is DayQuotaRange => Boolean(
+            range && typeof range === "object" &&
+            typeof (range as DayQuotaRange).surahStart === "string" &&
+            typeof (range as DayQuotaRange).surahEnd === "string" &&
+            typeof (range as DayQuotaRange).ayahStart === "number" &&
+            typeof (range as DayQuotaRange).ayahEnd === "number",
+          ))
+        : [];
+      return [...juzListToQuotaRanges(juzNumbers), ...recordRanges];
+    } catch {}
+  }
+
+  if (plan.quotaType === "juz") {
+    try {
+      const selected = plan.extraRanges ? JSON.parse(plan.extraRanges) : [];
+      if (Array.isArray(selected)) {
+        const juzNumbers = selected.filter((value): value is number => Number.isInteger(value) && value >= 1 && value <= 30);
+        if (juzNumbers.length > 0) return juzListToQuotaRanges(juzNumbers);
+      }
+    } catch {}
+    return plan.quotaJuz ? juzListToQuotaRanges(Array.from({ length: plan.quotaJuz }, (_, index) => index + 1)) : [];
+  }
+
+  if (plan.quotaType === "surah" && plan.quotaSurahStart && plan.quotaSurahEnd && plan.quotaAyahStart && plan.quotaAyahEnd) {
+    const ranges: DayQuotaRange[] = [{
+      surahStart: plan.quotaSurahStart,
+      ayahStart: plan.quotaAyahStart,
+      surahEnd: plan.quotaSurahEnd,
+      ayahEnd: plan.quotaAyahEnd,
+    }];
+    if (plan.extraRanges) {
+      try {
+        const extra = JSON.parse(plan.extraRanges);
+        if (Array.isArray(extra)) ranges.push(...extra);
+      } catch {}
+    }
+    return ranges;
+  }
+  return [];
 }
 
 function buildQuotaLabel(plan: PlanSummary): string {
@@ -194,6 +259,7 @@ function FullPlanTable({ plan, trackType }: { plan: PlanSummary; trackType: stri
   const dates = getDayDates(plan.startDate, totalDays, mode);
   const today = getMeccaToday();
   const currentDay = getCurrentPlanDay(plan.startDate, totalDays, mode);
+  const computedRanges = getPlanRanges(plan).length > 0 ? computeDayRanges(getPlanRanges(plan), plan.days) : null;
 
   if (!plan.days || plan.days.length === 0) {
     return (
@@ -214,7 +280,7 @@ function FullPlanTable({ plan, trackType }: { plan: PlanSummary; trackType: stri
             </tr>
           </thead>
           <tbody>
-            {plan.days.map(day => {
+            {plan.days.map((day, dayIndex) => {
               const dateStr = dates[day.dayNumber - 1];
               const isToday = day.dayNumber === currentDay;
               const isPast = day.dayNumber < currentDay;
@@ -234,7 +300,13 @@ function FullPlanTable({ plan, trackType }: { plan: PlanSummary; trackType: stri
                   <td className="py-1 px-2 text-muted-foreground text-[10px]">
                     {dateStr ? formatArDate(dateStr) : "—"}
                   </td>
-                  <td className="py-1 px-2 text-[10px]">{formatDayRange(day)}</td>
+                  <td className="py-1 px-2 text-[10px]">
+                    {day.surahStart
+                      ? formatDayRange(day)
+                      : computedRanges?.[dayIndex]?.map((segment: DayRangeSegment) =>
+                          `${segment.surahStart} آية ${segment.ayahStart} ← ${segment.surahEnd} آية ${segment.ayahEnd}`,
+                        ).join(" + ") || "—"}
+                  </td>
                   <td className="py-1 px-2 text-center">{day.pages ?? "—"}</td>
                 </tr>
               );
@@ -876,6 +948,8 @@ export default function ReviewPlansOverviewPage({ userRole }: Props) {
   const [statusFilter, setStatusFilter] = useState<"all" | "behind" | "ontrack" | "ahead" | "absentToday">("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [studentCanEditPlan, setStudentCanEditPlan] = useState(false);
+  const [cancellationRequests, setCancellationRequests] = useState<CancellationRequest[]>([]);
+  const [processingCancellation, setProcessingCancellation] = useState<number | null>(null);
   const [togglingEdit, setTogglingEdit] = useState(false);
   const canSeeStatusTabs = userRole === "leader" || userRole === "deputy" || userRole === "track_supervisor";
 
@@ -883,9 +957,10 @@ export default function ReviewPlansOverviewPage({ userRole }: Props) {
     setLoading(true);
     setError(null);
     try {
-      const [overviewRes, settingsRes] = await Promise.all([
+      const [overviewRes, settingsRes, requestsRes] = await Promise.all([
         fetch(`${BASE}/api/review-plans/overview`, { headers: authHeader() }),
         fetch(`${BASE}/api/review-plans/settings`, { headers: authHeader() }),
+        fetch(`${BASE}/api/review-plans/cancellation-requests`, { headers: authHeader() }),
       ]);
       if (!overviewRes.ok) throw new Error("فشل تحميل البيانات");
       const json = await overviewRes.json();
@@ -899,6 +974,9 @@ export default function ReviewPlansOverviewPage({ userRole }: Props) {
       if (settingsRes.ok) {
         const settings = await settingsRes.json();
         setStudentCanEditPlan(settings.studentCanEditPlan ?? false);
+      }
+      if (requestsRes.ok) {
+        setCancellationRequests(await requestsRes.json());
       }
     } catch {
       setError("تعذّر تحميل خطط المراجعة");
@@ -921,6 +999,27 @@ export default function ReviewPlansOverviewPage({ userRole }: Props) {
       alert("خطأ: " + e.message);
     } finally {
       setTogglingEdit(false);
+    }
+  };
+
+  const handleCancellationDecision = async (request: CancellationRequest, approved: boolean) => {
+    setProcessingCancellation(request.id);
+    try {
+      const res = await fetch(`${BASE}/api/students/${request.studentId}/review-plan/${request.id}/cancellation-approval`, {
+        method: "PATCH",
+        headers: authHeader(),
+        body: JSON.stringify({ approved }),
+      });
+      if (!res.ok) {
+        const error = await res.json().catch(() => ({}));
+        throw new Error(error?.error ?? "تعذر تحديث الطلب");
+      }
+      setCancellationRequests(current => current.filter(item => item.id !== request.id));
+      await fetchData();
+    } catch (error: any) {
+      alert(error.message);
+    } finally {
+      setProcessingCancellation(null);
     }
   };
 
@@ -1022,6 +1121,47 @@ export default function ReviewPlansOverviewPage({ userRole }: Props) {
                 disabled={togglingEdit}
               />
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {!loading && !error && cancellationRequests.length > 0 && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-600" />
+              طلبات إلغاء الخطط
+              <Badge variant="secondary">{cancellationRequests.length}</Badge>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {cancellationRequests.map(request => (
+              <div key={request.id} className="flex items-center justify-between gap-3 rounded-lg border p-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold truncate">{request.studentName}</p>
+                  <p className="text-xs text-muted-foreground">{request.circleName} · {request.planType === "fixation" ? "خطة التثبيت" : "خطة المراجعة"}</p>
+                </div>
+                <div className="flex gap-1.5 shrink-0">
+                  <Button
+                    size="sm"
+                    className="h-8 gap-1 bg-emerald-600 hover:bg-emerald-700"
+                    disabled={processingCancellation === request.id}
+                    onClick={() => handleCancellationDecision(request, true)}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />موافقة
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 gap-1 text-rose-600"
+                    disabled={processingCancellation === request.id}
+                    onClick={() => handleCancellationDecision(request, false)}
+                  >
+                    <XCircle className="w-3.5 h-3.5" />رفض
+                  </Button>
+                </div>
+              </div>
+            ))}
           </CardContent>
         </Card>
       )}

@@ -7,7 +7,12 @@ export const reviewPlansTable = pgTable("review_plans", {
   studentId: integer("student_id").notNull(),
   circleId: integer("circle_id").notNull(),
   planType: text("plan_type").notNull(), // 'girls_review' | 'fixation'
-  status: text("status").notNull().default("active"), // 'active' | 'cancelled'
+  status: text("status").notNull().default("active"), // 'pending_approval' | 'active' | 'cancelled'
+  approvalStatus: text("approval_status").notNull().default("approved"), // 'pending' | 'approved' | 'rejected'
+  approvedById: integer("approved_by_id"),
+  approvedAt: timestamp("approved_at", { withTimezone: true }),
+  cancellationRequestedAt: timestamp("cancellation_requested_at", { withTimezone: true }),
+  cancellationRequestedById: integer("cancellation_requested_by_id"),
 
   quotaType: text("quota_type"), // 'juz' | 'surah'
   quotaJuz: integer("quota_juz"),
@@ -18,7 +23,7 @@ export const reviewPlansTable = pgTable("review_plans", {
   planMode: text("plan_mode"), // 'auto' | 'manual'
   totalPages: real("total_pages"),
 
-  quantity: text("quantity"), // 'full' | 'half' (fixation only)
+  quantity: text("quantity"), // 'half' | 'full' | 'double' (fixation only)
 
   extraRanges: text("extra_ranges"),
   // Immutable description of the memorization sources included when a girls

@@ -6,10 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Users, Archive, Loader2, MessageCircle, BookOpen, CalendarDays, CheckCircle2, History } from "lucide-react";
 import { makeWhatsAppLink } from "@/lib/utils";
-import { formatPages } from "@/lib/quran";
+import { computeDayRanges, type DayRangeSegment, formatPages } from "@/lib/quran";
 import { getInputFields, getFieldLabel } from "@/lib/schoolConfig";
 import MessagesSection from "@/components/MessagesSection";
-import { getCurrentPlanDay, getDayDates, formatArDate, type ReviewPlan } from "@/components/ReviewPlanSection";
+import { getCurrentPlanDay, getDayDates, formatArDate, getPlanRanges, type ReviewPlan } from "@/components/ReviewPlanSection";
 
 // حقول "الصفحات" القابلة للعرض من سجل يومي واحد، وكيفية استخراج كل حقل من الـ record.
 // يُطابق تمامًا حقول الإدخال المُستخدمة في شاشة إدخال البيانات (data-entry.tsx)
@@ -112,6 +112,10 @@ function CirclePlansCard({ circlePlans, trackType }: { circlePlans: ReviewPlan[]
                 </button>
                 {isOpen && (
                   <div className="px-4 pb-4">
+                    {(() => {
+                      const planRanges = getPlanRanges(plan);
+                      const computedRanges = planRanges.length > 0 ? computeDayRanges(planRanges, plan.days ?? []) : null;
+                      return (
                     <div className="overflow-x-auto rounded-xl border border-border/40 mt-1">
                       <table className="w-full text-xs min-w-[260px]">
                         <thead className="bg-muted/50">
@@ -123,7 +127,7 @@ function CirclePlansCard({ circlePlans, trackType }: { circlePlans: ReviewPlan[]
                           </tr>
                         </thead>
                         <tbody>
-                          {(plan.days ?? []).map((day: any) => {
+                          {(plan.days ?? []).map((day: any, dayIndex: number) => {
                             const dateStr = dates[day.dayNumber - 1];
                             const isToday = day.dayNumber === currentDay;
                             const isPast = day.dayNumber < currentDay;
@@ -136,7 +140,9 @@ function CirclePlansCard({ circlePlans, trackType }: { circlePlans: ReviewPlan[]
                                 <td className="py-1.5 px-2 text-[11px]">
                                   {day.surahStart
                                     ? `${day.surahStart}${day.ayahStart ? ` (${day.ayahStart}` : ""}${day.surahEnd && day.surahEnd !== day.surahStart ? ` ← ${day.surahEnd}` : ""}${day.ayahEnd ? ` ${day.ayahEnd})` : ""}`
-                                    : "—"}
+                                    : computedRanges?.[dayIndex]?.map((segment: DayRangeSegment) =>
+                                        `${segment.surahStart} آية ${segment.ayahStart} ← ${segment.surahEnd} آية ${segment.ayahEnd}`,
+                                      ).join(" + ") || "—"}
                                 </td>
                                 <td className="py-1.5 px-2 text-center">{day.pages ?? "—"}</td>
                               </tr>
@@ -145,6 +151,8 @@ function CirclePlansCard({ circlePlans, trackType }: { circlePlans: ReviewPlan[]
                         </tbody>
                       </table>
                     </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>

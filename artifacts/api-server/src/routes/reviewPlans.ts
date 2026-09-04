@@ -12,6 +12,7 @@ import {
 } from "@workspace/db";
 import { eq, and, desc, inArray, isNotNull, gt, gte, lte, sql } from "drizzle-orm";
 import { authenticate } from "../middlewares/authenticate";
+import { QURAN_SURAHS } from "../lib/quranMetadata";
 
 const router: IRouter = Router();
 
@@ -19,6 +20,34 @@ const GIRLS_TRACK_TYPES = ["girls"];
 const FIXATION_TRACK_TYPES = ["fixation"];
 
 type PlanType = "girls_review" | "fixation";
+
+const FIXATION_QUANTITY_PAGES = {
+  half: 0.5,
+  full: 1,
+  double: 2,
+} as const;
+
+function getFixationPagesPerDay(quantity: string | null | undefined): number {
+  if (quantity === "half") return FIXATION_QUANTITY_PAGES.half;
+  if (quantity === "double") return FIXATION_QUANTITY_PAGES.double;
+  return FIXATION_QUANTITY_PAGES.full;
+}
+
+function isValidQuranRange(
+  startSurah: unknown,
+  startAyah: unknown,
+  endSurah: unknown,
+  endAyah: unknown,
+): boolean {
+  if (typeof startSurah !== "string" || typeof endSurah !== "string") return false;
+  if (!Number.isInteger(startAyah) || !Number.isInteger(endAyah)) return false;
+  const start = QURAN_SURAHS.find(surah => surah.name === startSurah.trim());
+  const end = QURAN_SURAHS.find(surah => surah.name === endSurah.trim());
+  if (!start || !end) return false;
+  if ((startAyah as number) < 1 || (startAyah as number) > start.ayahs) return false;
+  if ((endAyah as number) < 1 || (endAyah as number) > end.ayahs) return false;
+  return start.number < end.number || (start.number === end.number && (startAyah as number) <= (endAyah as number));
+}
 
 function getPlanTypeForTrack(trackType: string): PlanType | null {
   if (GIRLS_TRACK_TYPES.includes(trackType)) return "girls_review";
@@ -686,6 +715,51 @@ router.post("/students/:id/review-plan", authenticate, async (req, res): Promise
     const planType = getPlanTypeForTrack(circle[0]!.trackType);
     if (!planType) { res.status(400).json({ error: "هذا المسار لا يدعم خطط المراجعة" }); return; }
 
+    if (planType === "fixation") {
+      if (planMode !== "auto" && planMode !== "manual") {
+        res.status(400).json({ error: "يجب اختيار طريقة إنشاء خطة التثبيت" }); return;
+      }
+      if (quantity !== "half" && quantity !== "full" && quantity !== "double") {
+        res.status(400).json({ error: "كمية التثبيت يجب أن تكون نصف وجه أو وجهًا أو وجهين" }); return;
+      }
+      if (
+        quotaType !== "surah" ||
+        typeof quotaSurahStart !== "string" ||
+        typeof quotaAyahStart !== "number" ||
+        quotaAyahStart < 1 ||
+        typeof quotaSurahEnd !== "string" ||
+        typeof quotaAyahEnd !== "number" ||
+        quotaAyahEnd < 1
+      ) {
+        res.status(400).json({ error: "يجب تحديد سورة وآية بداية خطة التثبيت" }); return;
+      }
+      if (!isValidQuranRange(quotaSurahStart, quotaAyahStart, quotaSurahEnd, quotaAyahEnd)) {
+        res.status(400).json({ error: "نطاق بداية خطة التثبيت غير صالح" }); return;
+      }
+      if (!Array.isArray(days) || days.length !== PLAN_TOTAL_DAYS.fixation) {
+        res.status(400).json({ error: "يجب أن تحتوي خطة التثبيت على ٢٤ يومًا" }); return;
+      }
+      const dailyPages = getFixationPagesPerDay(quantity);
+      const dayNumbers = new Set<number>();
+      for (const day of days) {
+        if (!day || !Number.isInteger(day.dayNumber) || day.dayNumber < 1 || day.dayNumber > 24 || dayNumbers.has(day.dayNumber)) {
+          res.status(400).json({ error: "أيام خطة التثبيت غير صالحة" }); return;
+        }
+        dayNumbers.add(day.dayNumber);
+        if (typeof day.pages !== "number" || day.pages !== dailyPages) {
+          res.status(400).json({ error: "يجب أن تطابق كمية كل يوم كمية التثبيت المختارة" }); return;
+        }
+        const hasAnyRange = day.surahStart || day.ayahStart || day.surahEnd || day.ayahEnd;
+        const hasCompleteRange = isValidQuranRange(day.surahStart, day.ayahStart, day.surahEnd, day.ayahEnd);
+        if (hasAnyRange && !hasCompleteRange) {
+          res.status(400).json({ error: "نطاق السورة والآيات في أحد أيام التثبيت غير مكتمل" }); return;
+        }
+      }
+      if (dayNumbers.size !== PLAN_TOTAL_DAYS.fixation) {
+        res.status(400).json({ error: "أرقام أيام خطة التثبيت يجب أن تكون من ١ إلى ٢٤ دون تكرار" }); return;
+      }
+    }
+
     // ── Lock check: prevent creating/renewing if plan is still active ──────────
     const [activePlan] = await db.select()
       .from(reviewPlansTable)
@@ -697,6 +771,10 @@ router.post("/students/:id/review-plan", authenticate, async (req, res): Promise
       .limit(1);
 
     if (activePlan?.startDate && !isWithinAutoPlanEditWindow(activePlan)) {
+      if (activePlan.cancellationRequestedAt && activePlan.approvalStatus === "pending") {
+        res.status(409).json({ error: "تم إرسال طلب إلغاء الخطة وينتظر موافقة القائدة" });
+        return;
+      }
       const endDate = await getEffectiveEndDate(activePlan);
       const today = getTodayMecca();
       if (today <= endDate) {
@@ -820,18 +898,40 @@ router.post("/students/:id/review-plan", authenticate, async (req, res): Promise
       startDate = req.body?.startDate ?? getTodayMecca();
     }
 
-    // A manually initiated girls plan uses the same immutable source snapshot as
-    // an automatic renewal. If no memorization has been recorded yet, retain the
-    // existing wizard-driven plan behavior. Fixation plans have no such snapshot —
-    // their quota/days always come from the submitted wizard body.
-    const sourceSnapshot = planType === "girls_review"
-      ? await buildGirlsReviewSourceSnapshot(db, studentId, circleId, getTodayMecca())
-      : null;
+    // A POST from the wizard is always a new explicit plan. Its selected quota
+    // and day ranges must win, even when the student already has memorization
+    // records. The previous-quota-plus-new-records rule belongs exclusively to
+    // autoRenewPlan(), which is the cycle renewal path.
+    const sourceSnapshot: GirlsReviewSourceSnapshot | null = null;
     const sourceTotal = sourceSnapshot ? snapshotTotalPages(sourceSnapshot) : 0;
     const hasRecordedSources = sourceTotal > 0;
+
+    const fixationDailyPages = planType === "fixation"
+      ? getFixationPagesPerDay(quantity)
+      : 0;
+
+    const fixationAutoDays: any[] = planType === "fixation" && planMode === "auto"
+      ? Array.from({ length: 24 }, (_, index) => ({
+          dayNumber: index + 1,
+          pages: fixationDailyPages,
+          surahStart: null,
+          ayahStart: null,
+          surahEnd: null,
+          ayahEnd: null,
+        }))
+      : [];
+
     const sourceDays = hasRecordedSources
       ? distribute(sourceTotal, PLAN_TOTAL_DAYS.girls_review).map((pages, index) => ({ dayNumber: index + 1, pages }))
-      : days;
+      : planType === "fixation"
+        ? (fixationAutoDays.length > 0
+          ? fixationAutoDays
+          : days.map((day: any, index: number) => ({
+              ...day,
+              dayNumber: index + 1,
+              pages: fixationDailyPages,
+            })))
+        : days;
 
     // Cancel any previous active plan
     await db.update(reviewPlansTable)
@@ -841,6 +941,10 @@ router.post("/students/:id/review-plan", authenticate, async (req, res): Promise
         eq(reviewPlansTable.circleId, circleId),
         eq(reviewPlansTable.status, "active")
       ));
+
+    const fixationTotalPages = planType === "fixation"
+      ? getFixationPagesPerDay(quantity) * 24
+      : undefined;
 
     const [plan] = await db.insert(reviewPlansTable).values({
       studentId,
@@ -856,7 +960,7 @@ router.post("/students/:id/review-plan", authenticate, async (req, res): Promise
       extraRanges: hasRecordedSources ? null : extraRanges ?? null,
       reviewSourceSnapshot: hasRecordedSources ? JSON.stringify(sourceSnapshot) : null,
       planMode: hasRecordedSources ? "auto" : planMode ?? null,
-      totalPages: hasRecordedSources ? sourceTotal : totalPages ?? null,
+      totalPages: hasRecordedSources ? sourceTotal : (planType === "fixation" ? fixationTotalPages : totalPages ?? null),
       quantity: quantity ?? null,
       startDate,
       themeColor: themeColor ?? "#E8D5F5",
@@ -919,8 +1023,16 @@ router.delete("/students/:id/review-plan/:planId", authenticate, async (req, res
       const endDate = await getEffectiveEndDate(planToDelete);
       const today = getTodayMecca();
       if (today <= endDate) {
-        res.status(403).json({
-          error: "لا يمكن حذف خطة المراجعة قبل انتهاء الـ21 يوم",
+        await db.update(reviewPlansTable)
+          .set({
+            approvalStatus: "pending",
+            cancellationRequestedAt: new Date(),
+            cancellationRequestedById: req.userId,
+          })
+          .where(eq(reviewPlansTable.id, planId));
+        res.status(202).json({
+          status: "pending_approval",
+          message: "تم إرسال طلب إلغاء الخطة إلى القائدة للموافقة",
           lockedUntil: endDate,
         });
         return;
@@ -933,6 +1045,68 @@ router.delete("/students/:id/review-plan/:planId", authenticate, async (req, res
     .where(and(eq(reviewPlansTable.id, planId), eq(reviewPlansTable.studentId, studentId)));
 
   res.status(204).send();
+});
+
+// ─── PATCH: approve or reject a cancellation request ────────────────────────
+router.patch("/students/:id/review-plan/:planId/cancellation-approval", authenticate, async (req, res): Promise<void> => {
+  const approverRoles = ["leader", "deputy", "track_supervisor"];
+  if (!approverRoles.includes(req.userRole!)) { res.status(403).json({ error: "يجب اعتماد الطلب من القائدة أو من ينوب عنها" }); return; }
+
+  const studentId = parseInt(req.params.id as string);
+  const planId = parseInt(req.params.planId as string);
+  const approved = req.body?.approved === true;
+  const [plan] = await db.select().from(reviewPlansTable)
+    .where(and(eq(reviewPlansTable.id, planId), eq(reviewPlansTable.studentId, studentId)))
+    .limit(1);
+
+  if (!plan || !plan.cancellationRequestedAt || plan.approvalStatus !== "pending") {
+    res.status(404).json({ error: "لا يوجد طلب إلغاء معلق لهذه الخطة" });
+    return;
+  }
+
+  if (approved) {
+    const [cancelledPlan] = await db.update(reviewPlansTable)
+      .set({ status: "cancelled", approvalStatus: "approved", approvedById: req.userId, approvedAt: new Date() })
+      .where(and(eq(reviewPlansTable.id, planId), eq(reviewPlansTable.status, "active")))
+      .returning();
+    res.json({ status: "approved", plan: cancelledPlan });
+    return;
+  }
+
+  const [rejectedPlan] = await db.update(reviewPlansTable)
+    .set({ approvalStatus: "rejected", cancellationRequestedAt: null, cancellationRequestedById: null })
+    .where(eq(reviewPlansTable.id, planId))
+    .returning();
+  res.json({ status: "rejected", plan: rejectedPlan });
+});
+
+// ─── GET: pending cancellation requests for leaders ─────────────────────────
+router.get("/review-plans/cancellation-requests", authenticate, async (req, res): Promise<void> => {
+  const approverRoles = ["leader", "deputy", "track_supervisor"];
+  if (!approverRoles.includes(req.userRole!)) { res.status(403).json({ error: "Forbidden" }); return; }
+
+  const requests = await db.select({
+    plan: reviewPlansTable,
+    studentName: studentsTable.fullName,
+    circleName: circlesTable.name,
+  })
+    .from(reviewPlansTable)
+    .innerJoin(studentsTable, eq(reviewPlansTable.studentId, studentsTable.id))
+    .innerJoin(circlesTable, eq(reviewPlansTable.circleId, circlesTable.id))
+    .where(and(
+      eq(reviewPlansTable.status, "active"),
+      eq(reviewPlansTable.approvalStatus, "pending"),
+    ))
+    .orderBy(desc(reviewPlansTable.cancellationRequestedAt));
+
+  res.json(requests.map(({ plan, studentName, circleName }) => ({
+    ...plan,
+    studentName,
+    circleName,
+    createdAt: plan.createdAt.toISOString(),
+    updatedAt: plan.updatedAt?.toISOString(),
+    cancellationRequestedAt: plan.cancellationRequestedAt?.toISOString(),
+  })));
 });
 
 // ─── GET: all plans in a circle ───────────────────────────────────────────────
