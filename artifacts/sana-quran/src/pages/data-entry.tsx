@@ -767,6 +767,15 @@ export default function DataEntryPage() {
   const { data: circles } = useListCircles(undefined, { query: { queryKey: ["circles"] } });
   const { data: tracks } = useListTracks({ query: { queryKey: ["tracks"] } });
 
+  // المعلمة/المشرفة لديها حلقة واحدة فقط (السيرفر أصلًا يُرجع لها حلقتها فقط) —
+  // نختارها تلقائيًا فور توفرها، بدون الحاجة لاختيار مسار ولا حلقة يدويًا.
+  const isTeacherOrSupervisor = (user as any)?.role === "teacher" || (user as any)?.role === "supervisor";
+  useEffect(() => {
+    if (isTeacherOrSupervisor && circles && circles.length > 0 && !selectedCircleId) {
+      setSelectedCircleId(circles[0].id);
+    }
+  }, [isTeacherOrSupervisor, circles, selectedCircleId]);
+
   // Fetch circle review plans for color comparison
   useEffect(() => {
     if (!selectedCircleId) { setCirclePlans([]); return; }
@@ -1523,7 +1532,8 @@ export default function DataEntryPage() {
         </Card>
       )}
 
-      {/* Step 2 — Circle */}
+      {/* Step 2 — Circle (مخفية للمعلمة/المشرفة: حلقتها الوحيدة تُختار تلقائيًا) */}
+      {!isTeacherOrSupervisor && (
       <Card className="border-0 shadow-sm">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-bold flex items-center gap-2">
@@ -1602,6 +1612,7 @@ export default function DataEntryPage() {
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Teacher Absent Banner */}
       {selectedCircleId && isTeacherAbsent && (
