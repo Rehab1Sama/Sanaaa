@@ -955,6 +955,11 @@ export default function DataEntryPage() {
     isThursdaySelected && !!selectedCircle && !THURSDAY_QUOTA_EXCLUDED_TYPES.includes(selectedCircle.dataEntryType);
   const mothersLocked = isMothersEntry && !isThursdayDate(getMeccaToday());
 
+  // حلقات الأطفال والأمهات: الإدخال خاص بالمعلمة فقط، لا يظهر للمشرفة.
+  const supervisorBlockedFromEntry =
+    (user as any)?.role === "supervisor" &&
+    ["children", "mothers"].includes(selectedCircle?.dataEntryType);
+
   // Force selectedDate to today for mothers-track circles (weekly entry, end of week only)
   useEffect(() => {
     if (isMothersEntry) {
@@ -1645,8 +1650,25 @@ export default function DataEntryPage() {
         </Card>
       )}
 
+      {/* Supervisor blocked from children/mothers entry */}
+      {selectedCircleId && !isTeacherAbsent && supervisorBlockedFromEntry && (
+        <Card className="border-2 border-amber-300 bg-amber-50 shadow-sm">
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+              <UserX className="w-5 h-5 text-amber-600" />
+            </div>
+            <div>
+              <p className="font-bold text-amber-800 text-sm">الإدخال غير متاح لكِ</p>
+              <p className="text-xs text-amber-600 mt-0.5">
+                إدخال بيانات حلقات الأطفال والأمهات خاص بالمعلمة فقط
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Step 3 — Mothers locked notice */}
-      {selectedCircleId && !isTeacherAbsent && mothersLocked && (
+      {selectedCircleId && !isTeacherAbsent && !supervisorBlockedFromEntry && mothersLocked && (
         <Card className="border-0 shadow-sm">
           <CardContent className="py-8 text-center">
             <CalendarDays className="w-10 h-10 mx-auto mb-2 text-amber-400" />
@@ -1658,7 +1680,7 @@ export default function DataEntryPage() {
       )}
 
       {/* Step 3 — Thursday quota review (صح/خطأ) */}
-      {selectedCircleId && !isTeacherAbsent && isThursdayQuotaCircle && (
+      {selectedCircleId && !isTeacherAbsent && !supervisorBlockedFromEntry && isThursdayQuotaCircle && (
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-bold flex items-center gap-2">
@@ -1763,7 +1785,7 @@ export default function DataEntryPage() {
       )}
 
       {/* Step 3 — Students list */}
-      {selectedCircleId && !isTeacherAbsent && !isThursdayQuotaCircle && !mothersLocked && (
+      {selectedCircleId && !isTeacherAbsent && !supervisorBlockedFromEntry && !isThursdayQuotaCircle && !mothersLocked && (
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between gap-2">
