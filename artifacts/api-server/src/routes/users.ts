@@ -36,8 +36,16 @@ router.post("/users/:id/restore", authenticate, async (req, res): Promise<void> 
   if (req.userRole !== "leader" && protectedRoles.includes(target.role)) {
     res.status(403).json({ error: "لا تملكين صلاحية استعادة هذا الحساب" }); return;
   }
-  if (req.userRole === "track_supervisor" && target.track !== req.userTrack) {
-    res.status(403).json({ error: "الحساب خارج نطاق المسار" }); return;
+  if (req.userRole === "track_supervisor") {
+    let inTrack = target.track === req.userTrack;
+    if (!inTrack && req.userTrack && (target.role === "teacher" || target.role === "supervisor")) {
+      const ownerColumn = target.role === "teacher" ? circlesTable.teacherId : circlesTable.supervisorId;
+      const [ownedCircle] = await db.select({ id: circlesTable.id }).from(circlesTable).where(and(
+        eq(ownerColumn, target.id), eq(circlesTable.track, req.userTrack), eq(circlesTable.isArchived, false),
+      )).limit(1);
+      inTrack = Boolean(ownedCircle);
+    }
+    if (!inTrack) { res.status(403).json({ error: "الحساب خارج نطاق المسار" }); return; }
   }
   const [user] = await db.update(usersTable)
     .set({ isArchived: false })
@@ -101,14 +109,12 @@ router.get("/users", authenticate, async (req, res): Promise<void> => {
       trackCircles.flatMap(circle => [circle.teacherId, circle.supervisorId].filter((id): id is number => id != null)),
     );
     const activeEnrollments = await db
-      .select({ studentId: studentEnrollmentsTable.studentId, circleId: studentEnrollmentsTable.circleId })
+      .select({ studentId: studentEnrollmentsTable.studentId, circleId: studentEnrollmentsTable.circleId, studentName: studentsTable.fullName })
       .from(studentEnrollmentsTable)
+      .innerJoin(studentsTable, eq(studentsTable.id, studentEnrollmentsTable.studentId))
       .where(eq(studentEnrollmentsTable.isArchived, false));
-    const trackStudentIds = new Set(
-      activeEnrollments
-        .filter(enrollment => trackCircleIds.has(enrollment.circleId))
-        .map(enrollment => enrollment.studentId),
-    );
+    const trackEnrollments = activeEnrollments.filter(enrollment => trackCircleIds.has(enrollment.circleId));
+    const trackStudentIds = new Set(trackEnrollments.map(enrollment => enrollment.studentId));
     const all = await db.select().from(usersTable);
     const filtered = all.filter(u => {
       if (u.isArchived) return false;
@@ -121,7 +127,14 @@ router.get("/users", authenticate, async (req, res): Promise<void> => {
       }
       return u.track === myTrack || (u.circleId != null && trackCircleIds.has(u.circleId)) || trackStaffIds.has(u.id);
     });
-    res.json(withMeta(filtered));
+    const studentIdByName = new Map<string, number>();
+    for (const enrollment of trackEnrollments) {
+      const key = enrollment.studentName.trim().replace(/\s+/g, " ").toLowerCase();
+      if (!studentIdByName.has(key)) studentIdByName.set(key, enrollment.studentId);
+    }
+    res.json(withMeta(filtered).map(user => user.role === "student" && !user.studentId
+      ? { ...user, studentId: studentIdByName.get(user.name.trim().replace(/\s+/g, " ").toLowerCase()) ?? null }
+      : user));
     return;
   }
   if (req.userRole !== "leader" && req.userRole !== "deputy") {
@@ -330,7 +343,12 @@ router.patch("/users/:id", authenticate, async (req, res): Promise<void> => {
   // أن يلمس student_enrollments أبداً، فيبقى التسجيل القديم نشطًا وتظهر
   // الطالبة بحلقتين بنفس الوقت. النقل الصحيح يجب أن يمر عبر
   // PATCH /students/:id فقط (يقفل التسجيل القديم ويفتح الجديد).
-  if (existingUser.role === "student" && parsed.data.circleId !== undefined && parsed.data.circleId !== null) {
+  if (
+    existingUser.role === "student" &&
+    parsed.data.circleId !== undefined &&
+    parsed.data.circleId !== null &&
+    parsed.data.circleId !== existingUser.circleId
+  ) {
     res.status(400).json({ error: "نقل الطالبة بين الحلقات يتم فقط عبر عملية نقل الطالبة المخصصة، وليس من تعديل الحساب" });
     return;
   }
@@ -495,7 +513,15 @@ router.delete("/users/:id", authenticate, async (req, res): Promise<void> => {
       !belongsToSupervisorTrack
     )
   ) {
-    res.status(403).json({ error: "Forbidden" }); return;
+    let inTrack = belongsToSupervisorTrack;
+    if (!inTrack && req.userRole === "track_supervisor" && req.userTrack && (target.role === "teacher" || target.role === "supervisor")) {
+      const ownerColumn = target.role === "teacher" ? circlesTable.teacherId : circlesTable.supervisorId;
+      const [ownedCircle] = await db.select({ id: circlesTable.id }).from(circlesTable).where(and(
+        eq(ownerColumn, target.id), eq(circlesTable.track, req.userTrack), eq(circlesTable.isArchived, false),
+      )).limit(1);
+      inTrack = Boolean(ownedCircle);
+    }
+    if (!inTrack) { res.status(403).json({ error: "الحساب خارج نطاق المسار" }); return; }
   }
   await db.transaction(async (tx: Parameters<Parameters<typeof db.transaction>[0]>[0]) => {
     if (target.role === "teacher") {
