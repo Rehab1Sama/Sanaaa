@@ -93,10 +93,13 @@ router.get("/users", authenticate, async (req, res): Promise<void> => {
       return;
     }
     const trackCircles = await db
-      .select({ id: circlesTable.id })
+      .select({ id: circlesTable.id, teacherId: circlesTable.teacherId, supervisorId: circlesTable.supervisorId })
       .from(circlesTable)
       .where(eq(circlesTable.track, myTrack));
     const trackCircleIds = new Set(trackCircles.map(circle => circle.id));
+    const trackStaffIds = new Set(
+      trackCircles.flatMap(circle => [circle.teacherId, circle.supervisorId].filter((id): id is number => id != null)),
+    );
     const activeEnrollments = await db
       .select({ studentId: studentEnrollmentsTable.studentId, circleId: studentEnrollmentsTable.circleId })
       .from(studentEnrollmentsTable)
@@ -116,7 +119,7 @@ router.get("/users", authenticate, async (req, res): Promise<void> => {
           (u.studentId != null && trackStudentIds.has(u.studentId))
         );
       }
-      return u.track === myTrack || (u.circleId != null && trackCircleIds.has(u.circleId));
+      return u.track === myTrack || (u.circleId != null && trackCircleIds.has(u.circleId)) || trackStaffIds.has(u.id);
     });
     res.json(withMeta(filtered));
     return;
@@ -278,6 +281,24 @@ router.patch("/users/:id", authenticate, async (req, res): Promise<void> => {
         .where(eq(circlesTable.id, existingUser.circleId));
       belongsToSupervisorTrack = assignedCircle?.track === req.userTrack;
     }
+    if (
+      !belongsToSupervisorTrack &&
+      req.userRole === "track_supervisor" &&
+      req.userTrack &&
+      (existingUser.role === "teacher" || existingUser.role === "supervisor")
+    ) {
+      const ownerColumn = existingUser.role === "teacher" ? circlesTable.teacherId : circlesTable.supervisorId;
+      const [ownedCircle] = await db
+        .select({ id: circlesTable.id })
+        .from(circlesTable)
+        .where(and(
+          eq(ownerColumn, existingUser.id),
+          eq(circlesTable.track, req.userTrack),
+          eq(circlesTable.isArchived, false),
+        ))
+        .limit(1);
+      belongsToSupervisorTrack = Boolean(ownedCircle);
+    }
     if (!belongsToSupervisorTrack && req.userRole === "track_supervisor" && req.userTrack && existingUser.role === "student" && existingUser.studentId != null) {
       const [enrollment] = await db
         .select({ id: studentEnrollmentsTable.id })
@@ -328,7 +349,9 @@ router.patch("/users/:id", authenticate, async (req, res): Promise<void> => {
     // (النطاق مُتحقَّق منه أعلاه على "existingUser": الحساب المصدر يجب أن
     // يكون تابعًا لمسار مسؤولة المسار الحالية.)
   }
-  const updateData = { ...parsed.data };
+  const updateData: Record<string, unknown> = req.userRole === "track_supervisor"
+    ? { name: parsed.data.name }
+    : { ...parsed.data };
   // نقل المتطوعة بين الحلقات يجعل مسار حسابها تابعًا للحلقة الهدف تلقائيًا.
   if (existingUser.role === "volunteer" && targetCircleTrack) {
     updateData.track = targetCircleTrack;
