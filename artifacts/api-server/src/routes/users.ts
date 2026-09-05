@@ -278,6 +278,20 @@ router.patch("/users/:id", authenticate, async (req, res): Promise<void> => {
         .where(eq(circlesTable.id, existingUser.circleId));
       belongsToSupervisorTrack = assignedCircle?.track === req.userTrack;
     }
+    if (!belongsToSupervisorTrack && req.userRole === "track_supervisor" && req.userTrack && existingUser.role === "student" && existingUser.studentId != null) {
+      const [enrollment] = await db
+        .select({ id: studentEnrollmentsTable.id })
+        .from(studentEnrollmentsTable)
+        .innerJoin(circlesTable, eq(circlesTable.id, studentEnrollmentsTable.circleId))
+        .where(and(
+          eq(studentEnrollmentsTable.studentId, existingUser.studentId),
+          eq(studentEnrollmentsTable.isArchived, false),
+          eq(circlesTable.track, req.userTrack),
+          eq(circlesTable.isArchived, false),
+        ))
+        .limit(1);
+      belongsToSupervisorTrack = Boolean(enrollment);
+    }
     if (
       req.userRole !== "track_supervisor" ||
       !["student", "teacher", "supervisor", "volunteer"].includes(existingUser.role) ||
@@ -295,7 +309,7 @@ router.patch("/users/:id", authenticate, async (req, res): Promise<void> => {
   // أن يلمس student_enrollments أبداً، فيبقى التسجيل القديم نشطًا وتظهر
   // الطالبة بحلقتين بنفس الوقت. النقل الصحيح يجب أن يمر عبر
   // PATCH /students/:id فقط (يقفل التسجيل القديم ويفتح الجديد).
-  if (existingUser.role === "student" && parsed.data.circleId !== undefined) {
+  if (existingUser.role === "student" && parsed.data.circleId !== undefined && parsed.data.circleId !== null) {
     res.status(400).json({ error: "نقل الطالبة بين الحلقات يتم فقط عبر عملية نقل الطالبة المخصصة، وليس من تعديل الحساب" });
     return;
   }

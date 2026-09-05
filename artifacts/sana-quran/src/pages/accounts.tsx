@@ -291,7 +291,11 @@ export default function AccountsPage() {
         { id: editingUser.id, data },
         {
           onSuccess: () => afterSave(editingUser.id),
-          onError: () => toast({ title: "خطأ في تحديث الحساب", variant: "destructive" }),
+          onError: (error: any) => toast({
+            title: "خطأ في تحديث الحساب",
+            description: error?.message ?? "تعذر حفظ التعديل",
+            variant: "destructive",
+          }),
         }
       );
     } else {
